@@ -209,6 +209,38 @@ func TestStableRunResetsCounter(t *testing.T) {
 	}
 }
 
+func TestStableTimerDoesNotResetNewGeneration(t *testing.T) {
+	counter := filepath.Join(t.TempDir(), "counter")
+	script := writeScript(t, "generations.sh", "#!/bin/sh\ncount=0\n[ -f \""+counter+"\" ] && count=$(cat \""+counter+"\")\ncount=$((count + 1))\necho $count > \""+counter+"\"\ncase $count in\n  1) exit 1 ;;\n  2) sleep 0.08; exit 1 ;;\n  3) sleep 0.04; exit 1 ;;\n  *) sleep 30 ;;\nesac\n")
+	sup := NewSupervisor(SupervisorConfig{
+		BinPath:     script,
+		Backoff:     []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+		StableAfter: 100 * time.Millisecond,
+		StopGrace:   time.Second,
+	})
+	t.Cleanup(sup.StopAll)
+
+	if err := sup.Start(8); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	if !waitFor(t, 2*time.Second, func() bool {
+		st, _ := sup.Status(8)
+		return st.Status == StatusFailed
+	}) {
+		st, _ := sup.Status(8)
+		t.Fatalf("旧代际定时器不应清零新进程计数: %+v", st)
+	}
+}
+
+func TestLimitedBufferKeepsTail(t *testing.T) {
+	b := &limitedBuffer{cap: 6}
+	_, _ = b.Write([]byte("first-"))
+	_, _ = b.Write([]byte("second"))
+	if got := b.Tail(); got != "second" {
+		t.Fatalf("应保留尾部输出, got %q", got)
+	}
+}
+
 func TestStopDuringBackoffCancelsRestart(t *testing.T) {
 	script := writeScript(t, "exit.sh", "#!/bin/sh\nexit 1\n")
 	sup := fastSupervisor(script, []time.Duration{400 * time.Millisecond}, nil)

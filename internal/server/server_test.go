@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"socat-webui/internal/config"
 	"socat-webui/internal/proxy"
 	"socat-webui/internal/store"
@@ -96,6 +98,61 @@ func freePortForAPI(t *testing.T) int {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 	return port
+}
+
+func newHandlerForTest(t *testing.T) (*gin.Engine, *AuthService, func()) {
+	t.Helper()
+	st, err := store.Open(t.TempDir() + "/handler.db")
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	mgr := proxy.NewManager(st, proxy.ManagerConfig{SocatPath: "/nonexistent/socat", SelfPort: 15200}, nil)
+	auth := NewAuthService(st, nil)
+	if err := auth.BootstrapPassword(testPassword); err != nil {
+		t.Fatalf("初始化密码失败: %v", err)
+	}
+	return New(config.Config{Port: 15200}, mgr, auth), auth, func() {
+		mgr.Shutdown()
+		_ = st.Close()
+	}
+}
+
+func TestLoginIgnoresUntrustedForwardedFor(t *testing.T) {
+	r, auth, cleanup := newHandlerForTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{"password": "wrong"})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req.RemoteAddr = "192.0.2.10:12345"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "198.51.100.20")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("错误密码应返回 401, got %d", rec.Code)
+	}
+	if _, ok := auth.fails["192.0.2.10"]; !ok {
+		t.Fatalf("限速应记录直连来源，当前记录: %+v", auth.fails)
+	}
+	if _, ok := auth.fails["198.51.100.20"]; ok {
+		t.Fatal("不应信任 X-Forwarded-For")
+	}
+}
+
+func TestAPIRequestBodyLimit(t *testing.T) {
+	r, _, cleanup := newHandlerForTest(t)
+	defer cleanup()
+
+	body := bytes.Repeat([]byte("x"), int(maxAPIRequestBodyBytes)+1)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超限请求体应返回 413, got %d", rec.Code)
+	}
 }
 
 func loginOK(t *testing.T, baseURL, password string) string {

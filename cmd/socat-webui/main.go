@@ -111,7 +111,15 @@ func serve(args []string) error {
 	// 恢复先于 HTTP 监听：WebUI 可访问即代表恢复已完成（02-design 核心流程）
 	mgr.Restore()
 
-	httpSrv := &http.Server{Addr: cfg.ListenAddr(), Handler: server.New(cfg, mgr, auth)}
+	httpSrv := &http.Server{
+		Addr:              cfg.ListenAddr(),
+		Handler:           server.New(cfg, mgr, auth),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -8,7 +8,7 @@ build: build-web
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(PKG)
 
 build-web:
-	pnpm --dir web install
+	pnpm --dir web install --frozen-lockfile
 	pnpm --dir web build
 
 build-linux-amd64: build-web

@@ -89,6 +89,47 @@ sudo /usr/local/bin/socat-webui uninstall
 
 安装后浏览器访问 `http://<server-ip>:15200`。服务名 `socat-webui`，数据目录 `/var/lib/socat-webui/`。
 
+## 升级
+
+升级会保留现有 SQLite 数据、面板密码和代理期望状态。先确认服务器架构与下载的二进制一致：
+
+```bash
+uname -m
+# x86_64 使用 linux-amd64，aarch64/arm64 使用 linux-arm64
+```
+
+建议按以下步骤备份并替换二进制：
+
+```bash
+# 1. 在服务器上备份当前二进制
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo cp /usr/local/bin/socat-webui "/usr/local/bin/socat-webui.bak-${stamp}"
+
+# 2. 将新二进制暂存到同一目录，避免直接覆盖正在运行的文件
+sudo install -m 0755 ./socat-webui /usr/local/bin/socat-webui.next
+
+# 3. 停止服务后备份数据库，再原子替换并重新启动
+sudo systemctl stop socat-webui
+sudo cp /var/lib/socat-webui/proxies.db "/var/lib/socat-webui/proxies.db.bak-${stamp}"
+sudo mv /usr/local/bin/socat-webui.next /usr/local/bin/socat-webui
+sudo systemctl start socat-webui
+
+# 4. 检查服务、启动日志和页面
+sudo systemctl --no-pager --full status socat-webui
+sudo journalctl -u socat-webui -n 50 --no-pager
+curl -I http://127.0.0.1:15200/
+```
+
+升级不需要重新执行 `install --password`，否则会修改面板密码。若新版本启动失败，可恢复备份：
+
+```bash
+sudo systemctl stop socat-webui
+sudo install -m 0755 "/usr/local/bin/socat-webui.bak-${stamp}" /usr/local/bin/socat-webui
+# 仅在确认数据库迁移导致问题时恢复数据库备份
+# sudo cp "/var/lib/socat-webui/proxies.db.bak-${stamp}" /var/lib/socat-webui/proxies.db
+sudo systemctl start socat-webui
+```
+
 ### 前台运行（开发 / 临时使用）
 
 ```bash

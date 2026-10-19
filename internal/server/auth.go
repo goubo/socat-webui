@@ -58,14 +58,18 @@ func NewAuthService(st *store.Store, now func() time.Time) *AuthService {
 // 无任何来源时生成随机初始密码并打印一次到 stdout。
 func (a *AuthService) BootstrapPassword(envPassword string) error {
 	if envPassword != "" {
+		if stored, err := a.st.GetSetting(passwordSettingKey); err == nil {
+			if bcrypt.CompareHashAndPassword([]byte(stored), []byte(envPassword)) == nil {
+				return nil
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(envPassword), bcrypt.DefaultCost)
 		if err != nil {
 			return fmt.Errorf("哈希密码: %w", err)
 		}
-		if stored, err := a.st.GetSetting(passwordSettingKey); err != nil || stored != string(hash) {
-			return a.st.SetSetting(passwordSettingKey, string(hash))
-		}
-		return nil
+		return a.st.SetSetting(passwordSettingKey, string(hash))
 	}
 	if _, err := a.st.GetSetting(passwordSettingKey); err == nil {
 		return nil
@@ -90,7 +94,9 @@ func (a *AuthService) BootstrapPassword(envPassword string) error {
 
 func (a *AuthService) Login(password, clientIP string) (string, error) {
 	a.mu.Lock()
-	if fs := a.fails[clientIP]; fs != nil && a.now().Sub(fs.windowStart) < loginWindow && fs.count >= maxLoginFails {
+	now := a.now()
+	a.pruneLocked(now)
+	if fs := a.fails[clientIP]; fs != nil && now.Sub(fs.windowStart) < loginWindow && fs.count >= maxLoginFails {
 		a.mu.Unlock()
 		return "", ErrLogin
 	}
@@ -128,6 +134,7 @@ func (a *AuthService) Verify(token string) bool {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.pruneLocked(a.now())
 	expiry, ok := a.sessions[token]
 	if !ok {
 		return false
@@ -137,6 +144,19 @@ func (a *AuthService) Verify(token string) bool {
 		return false
 	}
 	return true
+}
+
+func (a *AuthService) pruneLocked(now time.Time) {
+	for token, expiry := range a.sessions {
+		if !now.Before(expiry) {
+			delete(a.sessions, token)
+		}
+	}
+	for clientIP, fs := range a.fails {
+		if now.Sub(fs.windowStart) >= loginWindow {
+			delete(a.fails, clientIP)
+		}
+	}
 }
 
 func (a *AuthService) recordFail(clientIP string) {

@@ -88,6 +88,56 @@ func TestLogoutInvalidatesToken(t *testing.T) {
 	}
 }
 
+func TestAuthPrunesExpiredState(t *testing.T) {
+	now := time.Now()
+	auth := newTestAuth(t, func() time.Time { return now })
+
+	if _, err := auth.Login(testPassword, "1.1.1.1"); err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	if _, err := auth.Login("wrong", "2.2.2.2"); err != ErrLogin {
+		t.Fatalf("错误密码应失败: %v", err)
+	}
+
+	now = now.Add(25 * time.Hour)
+	if _, err := auth.Login(testPassword, "3.3.3.3"); err != nil {
+		t.Fatalf("推进时间后登录失败: %v", err)
+	}
+	if len(auth.sessions) != 1 {
+		t.Fatalf("应只保留新会话，当前 %d 个", len(auth.sessions))
+	}
+	if len(auth.fails) != 0 {
+		t.Fatalf("过期限速记录应清理，当前 %d 个", len(auth.fails))
+	}
+}
+
+func TestBootstrapPasswordDoesNotRewriteSamePassword(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "bootstrap.db"))
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	defer st.Close()
+
+	auth := NewAuthService(st, nil)
+	if err := auth.BootstrapPassword(testPassword); err != nil {
+		t.Fatalf("首次初始化失败: %v", err)
+	}
+	first, err := st.GetSetting(passwordSettingKey)
+	if err != nil {
+		t.Fatalf("读取首次哈希失败: %v", err)
+	}
+	if err := auth.BootstrapPassword(testPassword); err != nil {
+		t.Fatalf("二次初始化失败: %v", err)
+	}
+	second, err := st.GetSetting(passwordSettingKey)
+	if err != nil {
+		t.Fatalf("读取二次哈希失败: %v", err)
+	}
+	if first != second {
+		t.Fatal("相同密码不应重复生成 bcrypt 哈希")
+	}
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	auth := newTestAuth(t, nil)
 	r := gin.New()

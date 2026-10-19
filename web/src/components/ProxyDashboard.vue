@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import 'element-plus/theme-chalk/el-message.css'
+import 'element-plus/theme-chalk/el-message-box.css'
 import { api, ApiError, clearToken } from '../api'
 import type { HealthInfo, PrecheckResult, ProxyDetail, ProxyInput, ProxyView, RuntimeState } from '../types'
 
@@ -132,12 +134,20 @@ async function submitForm() {
   }
   submitting.value = true
   try {
+    let result: ProxyView
     if (editing.value) {
-      await api.updateProxy(editing.value.id, { ...form })
-      ElMessage.success('已保存，运行中的代理已按新配置重启')
+      result = await api.updateProxy(editing.value.id, { ...form })
     } else {
-      await api.createProxy({ ...form }, true)
-      ElMessage.success('代理已创建并启动')
+      result = await api.createProxy({ ...form }, true)
+    }
+    if (!result.enabled) {
+      ElMessage.success('代理配置已保存')
+    } else if (result.runtime.status === 'running') {
+      ElMessage.success(editing.value ? '已保存并重启代理' : '代理已创建并启动')
+    } else {
+      const meta = statusInfo(result)
+      const detail = result.runtime.detail ? `：${result.runtime.detail}` : ''
+      ElMessage.warning(`配置已保存，代理当前${meta.label}${detail}`)
     }
     dialogVisible.value = false
   } catch (err) {
@@ -190,7 +200,7 @@ function fmtTime(value?: string) {
         </el-tag>
         <el-tag v-if="health" type="info">代理 {{ health.proxies.total }} · 运行 {{ health.proxies.running }}</el-tag>
       </div>
-      <div>
+      <div class="header-actions">
         <el-button @click="refresh(true)">刷新</el-button>
         <el-button type="primary" @click="openCreate">新增代理</el-button>
         <el-button @click="logout">退出登录</el-button>
@@ -239,7 +249,11 @@ function fmtTime(value?: string) {
       </el-table>
     </el-main>
 
-    <el-dialog v-model="dialogVisible" :title="editing ? '编辑代理' : '新增代理'" width="520px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editing ? '编辑代理' : '新增代理'"
+      width="min(520px, calc(100vw - 24px))"
+    >
       <el-form label-width="90px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" maxlength="64" placeholder="例如：数据库映射" />
@@ -278,7 +292,7 @@ function fmtTime(value?: string) {
       </template>
     </el-dialog>
 
-    <el-drawer v-model="drawerVisible" title="代理详情" size="420px">
+    <el-drawer v-model="drawerVisible" title="代理详情" size="min(420px, 92vw)">
       <div v-loading="detailLoading">
         <template v-if="detail">
           <el-descriptions :column="1" border>
@@ -325,12 +339,26 @@ function fmtTime(value?: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  height: auto;
+  min-height: 60px;
+  gap: 12px;
+  padding: 10px 20px;
   border-bottom: 1px solid #e4e7ed;
 }
 .brand {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+}
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.header-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 .brand h1 {
   margin: 0;
@@ -350,5 +378,20 @@ function fmtTime(value?: string) {
 .event-title {
   margin: 20px 0 12px;
   font-size: 14px;
+}
+
+@media (max-width: 720px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 12px;
+  }
+  .header-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  :deep(.el-main) {
+    padding: 12px;
+  }
 }
 </style>

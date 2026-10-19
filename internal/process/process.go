@@ -49,14 +49,15 @@ type Supervisor struct {
 }
 
 type managedProc struct {
-	args     []string
-	cmd      *exec.Cmd
-	stderr   *limitedBuffer
-	runDone  chan struct{}
-	stopping bool
-	restarts int
-	timer    *time.Timer
-	status   StatusInfo
+	args       []string
+	cmd        *exec.Cmd
+	stderr     *limitedBuffer
+	runDone    chan struct{}
+	stopping   bool
+	restarts   int
+	timer      *time.Timer
+	generation uint64
+	status     StatusInfo
 }
 
 var socatVersionRe = regexp.MustCompile(`version (\d+(?:\.\d+)+)`)
@@ -125,6 +126,8 @@ func (s *Supervisor) launchLocked(id uint, p *managedProc) error {
 	p.cmd = cmd
 	p.stderr = stderr
 	p.runDone = make(chan struct{})
+	p.generation++
+	generation := p.generation
 	p.status = StatusInfo{Status: StatusRunning, PID: cmd.Process.Pid, StartedAt: time.Now(), RestartCount: p.restarts}
 	go s.watch(id, p, cmd)
 
@@ -132,7 +135,7 @@ func (s *Supervisor) launchLocked(id uint, p *managedProc) error {
 		time.AfterFunc(s.cfg.StableAfter, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			if cur := s.procs[id]; cur == p && p.status.Status == StatusRunning {
+			if cur := s.procs[id]; cur == p && p.generation == generation && p.status.Status == StatusRunning {
 				p.restarts = 0
 				p.status.RestartCount = 0
 			}
@@ -299,10 +302,14 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	if b.cap <= 0 {
 		b.cap = 512
 	}
-	room := b.cap - len(b.buf)
-	if room > 0 {
-		n := min(room, len(p))
-		b.buf = append(b.buf, p[:n]...)
+	if len(p) >= b.cap {
+		b.buf = append(b.buf[:0], p[len(p)-b.cap:]...)
+		return len(p), nil
+	}
+	b.buf = append(b.buf, p...)
+	if overflow := len(b.buf) - b.cap; overflow > 0 {
+		copy(b.buf, b.buf[overflow:])
+		b.buf = b.buf[:b.cap]
 	}
 	return len(p), nil
 }

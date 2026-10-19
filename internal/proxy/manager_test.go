@@ -227,3 +227,52 @@ func TestExitFailedEventWritten(t *testing.T) {
 		t.Fatalf("应记录 exit_failed 事件: %+v", events)
 	}
 }
+
+func TestUpdateDuringRestartUsesNewArguments(t *testing.T) {
+	st := openManagerStore(t)
+	echoPort, stopEcho := startEchoListener(t)
+	defer stopEcho()
+
+	argsFile := filepath.Join(t.TempDir(), "args")
+	script := filepath.Join(t.TempDir(), "fake-socat")
+	content := "#!/bin/sh\nif [ \"$1\" = \"-V\" ]; then echo \"socat version 1.8.0.0\"; exit 0; fi\necho \"$*\" >> \"" + argsFile + "\"\nexit 3\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &store.Proxy{Name: "restart-update", LocalPort: freeTCPPort(t), RemoteHost: "127.0.0.1", RemotePort: echoPort, Enabled: true}
+	if err := st.CreateProxy(p); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(st, ManagerConfig{SocatPath: script, SelfPort: 15200, Backoff: []time.Duration{300 * time.Millisecond}}, nil)
+	defer m.Shutdown()
+	if err := m.sup.Start(p.ID, SocatArgs(p.LocalPort, p.RemoteHost, p.RemotePort)...); err != nil {
+		t.Fatalf("启动假代理失败: %v", err)
+	}
+	waitStatus(t, m, p.ID, "restarting")
+
+	view, err := m.Update(p.ID, ProxyInput{
+		Name: "restart-update", LocalPort: p.LocalPort, RemoteHost: "localhost", RemotePort: echoPort,
+	})
+	if err != nil {
+		t.Fatalf("退避期间修改失败: %v", err)
+	}
+	if view.RemoteHost != "localhost" {
+		t.Fatalf("修改后的视图未更新: %+v", view)
+	}
+
+	time.Sleep(700 * time.Millisecond)
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("读取启动参数失败: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("至少应记录修改前后两次启动: %q", data)
+	}
+	for _, line := range lines[1:] {
+		if strings.Contains(line, "TCP:127.0.0.1:") {
+			t.Fatalf("修改后不应再使用旧参数: %q", data)
+		}
+	}
+}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import 'element-plus/theme-chalk/el-message.css'
 import { api, setToken } from '../api'
 
 const emit = defineEmits<{ success: [] }>()
@@ -31,12 +32,14 @@ async function submit() {
     <el-card class="login-card">
       <h2 class="title">socat-webui</h2>
       <p class="subtitle">端口映射控制面板</p>
-      <el-form @submit.prevent="submit">
-        <el-form-item>
+      <el-form label-position="top" @submit.prevent="submit">
+        <el-form-item label="面板密码">
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="面板密码"
+            name="password"
+            autocomplete="current-password"
+            placeholder="请输入面板密码"
             show-password
             size="large"
             @keyup.enter="submit"
@@ -55,11 +58,12 @@ async function submit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 16px;
   background: #f5f7fa;
 }
 .login-card {
-  width: 360px;
+  width: min(360px, 100%);
 }
 .title {
   margin: 8px 0 4px;

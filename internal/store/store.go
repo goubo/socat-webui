@@ -114,13 +114,15 @@ func (s *Store) UpdateProxy(p *Proxy) error {
 
 // DeleteProxy 删除代理定义及其事件；进程停止由上层负责。
 func (s *Store) DeleteProxy(id uint) error {
-	if err := s.db.Delete(&Proxy{}, id).Error; err != nil {
-		return fmt.Errorf("删除代理 %d: %w", id, err)
-	}
-	if err := s.db.Where("proxy_id = ?", id).Delete(&Event{}).Error; err != nil {
-		return fmt.Errorf("删除代理 %d 事件: %w", id, err)
-	}
-	return nil
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&Proxy{}, id).Error; err != nil {
+			return fmt.Errorf("删除代理 %d: %w", id, err)
+		}
+		if err := tx.Where("proxy_id = ?", id).Delete(&Event{}).Error; err != nil {
+			return fmt.Errorf("删除代理 %d 事件: %w", id, err)
+		}
+		return nil
+	})
 }
 
 func (s *Store) AddEvent(proxyID uint, typ, detail string) error {

@@ -276,6 +276,8 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 	if err := m.validate(in); err != nil {
 		return View{}, err
 	}
+	old := *p
+	wasActive := false
 
 	portChanged := in.LocalPort != p.LocalPort
 	if portChanged {
@@ -294,10 +296,11 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 		if portChanged && !res.LocalFree {
 			return View{}, fmt.Errorf("%w: %s", ErrPortInUse, res.LocalErr)
 		}
-		if st, ok := m.sup.Status(id); ok && st.Status == process.StatusRunning {
+		if st, ok := m.sup.Status(id); ok && (st.Status == process.StatusRunning || st.Status == process.StatusRestarting) {
 			if err := m.sup.Stop(id); err != nil {
 				return View{}, fmt.Errorf("停止旧进程失败: %w", err)
 			}
+			wasActive = true
 		}
 	}
 
@@ -306,6 +309,11 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 	p.RemoteHost = in.RemoteHost
 	p.RemotePort = in.RemotePort
 	if err := m.st.UpdateProxy(p); err != nil {
+		if wasActive {
+			if restartErr := m.startLocked(&old); restartErr != nil {
+				slog.Error("更新落库失败后恢复旧进程失败", "proxyID", id, "err", restartErr)
+			}
+		}
 		return View{}, err
 	}
 	_ = m.st.AddEvent(id, store.EventUpdated, fmt.Sprintf("→ %s:%d", in.RemoteHost, in.RemotePort))
@@ -351,13 +359,20 @@ func (m *Manager) Enable(id uint) (View, error) {
 		return View{}, fmt.Errorf("%w: %s", ErrPortInUse, res.LocalErr)
 	}
 
-	if !p.Enabled {
+	wasEnabled := p.Enabled
+	if !wasEnabled {
 		p.Enabled = true
 		if err := m.st.UpdateProxy(p); err != nil {
 			return View{}, err
 		}
 	}
 	if err := m.startLocked(p); err != nil {
+		if !wasEnabled {
+			p.Enabled = false
+			if saveErr := m.st.UpdateProxy(p); saveErr != nil {
+				slog.Error("启用失败后回滚期望状态失败", "proxyID", id, "err", saveErr)
+			}
+		}
 		return View{}, err
 	}
 	_ = m.st.AddEvent(id, store.EventEnabled, "人工启用")
@@ -376,14 +391,21 @@ func (m *Manager) Disable(id uint) (View, error) {
 		}
 		return View{}, err
 	}
-	if err := m.sup.Stop(id); err != nil {
-		return View{}, err
-	}
-	if p.Enabled {
+	wasEnabled := p.Enabled
+	if wasEnabled {
 		p.Enabled = false
 		if err := m.st.UpdateProxy(p); err != nil {
 			return View{}, err
 		}
+	}
+	if err := m.sup.Stop(id); err != nil {
+		if wasEnabled {
+			p.Enabled = true
+			if saveErr := m.st.UpdateProxy(p); saveErr != nil {
+				slog.Error("停用失败后回滚期望状态失败", "proxyID", id, "err", saveErr)
+			}
+		}
+		return View{}, err
 	}
 	_ = m.st.AddEvent(id, store.EventDisabled, "人工停用")
 	return m.view(*p), nil
@@ -394,16 +416,27 @@ func (m *Manager) Delete(id uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, err := m.st.GetProxy(id); err != nil {
+	p, err := m.st.GetProxy(id)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrNotFound
 		}
 		return err
 	}
+	st, ok := m.sup.Status(id)
+	wasActive := ok && (st.Status == process.StatusRunning || st.Status == process.StatusRestarting)
 	if err := m.sup.Stop(id); err != nil {
 		return err
 	}
-	return m.st.DeleteProxy(id)
+	if err := m.st.DeleteProxy(id); err != nil {
+		if wasActive {
+			if restartErr := m.startLocked(p); restartErr != nil {
+				slog.Error("删除失败后恢复代理进程失败", "proxyID", id, "err", restartErr)
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 // Health 实时探测 socat 并聚合代理运行统计。
