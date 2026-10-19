@@ -96,6 +96,14 @@ func (s *Store) GetProxy(id uint) (*Proxy, error) {
 	return &p, nil
 }
 
+func (s *Store) FindByLocalPort(port int) (*Proxy, error) {
+	var p Proxy
+	if err := s.db.First(&p, "local_port = ?", port).Error; err != nil {
+		return nil, fmt.Errorf("按本地端口 %d 查询: %w", port, err)
+	}
+	return &p, nil
+}
+
 func (s *Store) UpdateProxy(p *Proxy) error {
 	if err := s.db.Save(p).Error; err != nil {
 		return fmt.Errorf("更新代理 %d: %w", p.ID, err)

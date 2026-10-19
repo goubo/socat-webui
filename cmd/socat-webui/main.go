@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"socat-webui/internal/config"
+	"socat-webui/internal/process"
+	"socat-webui/internal/proxy"
 	"socat-webui/internal/server"
+	"socat-webui/internal/store"
 )
 
 func main() {
@@ -46,7 +49,30 @@ func serve(args []string) error {
 	}
 	slog.Info("启动 socat-webui", "addr", cfg.ListenAddr(), "db", cfg.DBPath)
 
-	httpSrv := &http.Server{Addr: cfg.ListenAddr(), Handler: server.New(cfg)}
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if _, _, err := process.DetectSocat(cfg.SocatPath); err != nil {
+		slog.Warn("socat 不可用，代理管理操作将被拒绝", "err", err)
+	}
+
+	mgr := proxy.NewManager(st, proxy.ManagerConfig{
+		SocatPath: cfg.SocatPath,
+		SelfPort:  cfg.Port,
+	}, func(id uint, st process.StatusInfo) {
+		slog.Info("代理进程状态变化", "proxyID", id, "status", st.Status, "detail", st.Detail)
+	})
+	defer mgr.Shutdown()
+
+	auth := server.NewAuthService(st, nil)
+	if err := auth.BootstrapPassword(os.Getenv("SOCAT_WEBUI_PASSWORD")); err != nil {
+		return fmt.Errorf("初始化面板密码: %w", err)
+	}
+
+	httpSrv := &http.Server{Addr: cfg.ListenAddr(), Handler: server.New(cfg, mgr, auth)}
 
 	errCh := make(chan error, 1)
 	go func() {

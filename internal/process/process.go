@@ -14,6 +14,9 @@ import (
 // Status 是代理进程的运行态，始终来自真实进程情况（D-005）。
 type Status string
 
+// ErrProcessActive 表示该 id 已有运行中/退避等待中的进程。
+var ErrProcessActive = errors.New("进程已在运行")
+
 const (
 	StatusRunning    Status = "running"
 	StatusRestarting Status = "restarting"
@@ -98,7 +101,7 @@ func (s *Supervisor) Start(id uint, args ...string) error {
 		switch old.status.Status {
 		case StatusRunning, StatusRestarting:
 			s.mu.Unlock()
-			return fmt.Errorf("代理 %d 进程已在运行", id)
+			return fmt.Errorf("代理 %d: %w", id, ErrProcessActive)
 		}
 	}
 	p := &managedProc{args: args}

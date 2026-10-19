@@ -15,9 +15,10 @@ const (
 )
 
 type Config struct {
-	Listen string
-	Port   int
-	DBPath string
+	Listen    string
+	Port      int
+	DBPath    string
+	SocatPath string // 显式 socat 路径；空则使用 PATH
 }
 
 func (c Config) ListenAddr() string {
@@ -27,9 +28,10 @@ func (c Config) ListenAddr() string {
 // Parse 解析 serve 参数，优先级：flag > 环境变量（SOCAT_WEBUI_LISTEN/PORT/DB）> 默认值。
 func Parse(args []string) (Config, error) {
 	cfg := Config{
-		Listen: envOr("SOCAT_WEBUI_LISTEN", DefaultListen),
-		Port:   DefaultPort,
-		DBPath: envOr("SOCAT_WEBUI_DB", DefaultDBPath),
+		Listen:    envOr("SOCAT_WEBUI_LISTEN", DefaultListen),
+		Port:      DefaultPort,
+		DBPath:    envOr("SOCAT_WEBUI_DB", DefaultDBPath),
+		SocatPath: os.Getenv("SOCAT_WEBUI_SOCAT"),
 	}
 	if v := os.Getenv("SOCAT_WEBUI_PORT"); v != "" {
 		p, err := strconv.Atoi(v)
@@ -43,6 +45,7 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "WebUI 监听地址")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "WebUI 监听端口")
 	fs.StringVar(&cfg.DBPath, "db", cfg.DBPath, "SQLite 数据文件路径")
+	fs.StringVar(&cfg.SocatPath, "socat-path", cfg.SocatPath, "socat 可执行文件路径（默认查 PATH）")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("解析启动参数: %w", err)
 	}
