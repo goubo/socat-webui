@@ -10,13 +10,14 @@ import (
 )
 
 // Proxy 一条端口映射定义；Enabled 是期望状态，恢复流程的唯一依据。
+// 不加 default 标签：GORM 对零值 false 会跳过写入，导致落库取默认 true。
 type Proxy struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
 	Name       string    `gorm:"size:64;not null" json:"name"`
 	LocalPort  int       `gorm:"not null;uniqueIndex" json:"localPort"`
 	RemoteHost string    `gorm:"size:255;not null" json:"remoteHost"`
 	RemotePort int       `gorm:"not null" json:"remotePort"`
-	Enabled    bool      `gorm:"not null;default:true" json:"enabled"`
+	Enabled    bool      `gorm:"not null" json:"enabled"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 }

@@ -17,7 +17,8 @@ import (
 // ManagerConfig 管理器配置；SocatPath 为空时使用 PATH 中的 socat。
 type ManagerConfig struct {
 	SocatPath string
-	SelfPort  int // WebUI 自身监听端口，映射端口不得与其相同
+	SelfPort  int             // WebUI 自身监听端口，映射端口不得与其相同
+	Backoff   []time.Duration // 测试注入毫秒级退避；空则用监督器默认 1s/5s/30s
 }
 
 // Manager 编排持久化、前置检查与 socat 进程监督；
@@ -72,10 +73,64 @@ func NewManager(st *store.Store, cfg ManagerConfig, onChange func(id uint, st pr
 	}
 	m := &Manager{cfg: cfg, st: st}
 	m.sup = process.NewSupervisor(process.SupervisorConfig{
-		BinPath:  binPath,
-		OnChange: onChange,
+		BinPath: binPath,
+		Backoff: cfg.Backoff,
+		OnChange: func(id uint, st process.StatusInfo) {
+			if st.Status == process.StatusFailed {
+				if err := m.st.AddEvent(id, store.EventExitFailed, st.Detail); err != nil {
+					slog.Warn("写入异常退出事件失败", "proxyID", id, "err", err)
+				}
+			}
+			if onChange != nil {
+				onChange(id, st)
+			}
+		},
 	})
 	return m
+}
+
+// Restore 程序启动时按持久化期望状态恢复代理（R-009）：
+// enabled 的重新拉起，端口被占或 socat 缺失标记 failed 并记录事件，不阻塞其他代理；
+// 远端不可达不阻止启动（D-009，socat fork 为懒连接）。
+func (m *Manager) Restore() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	proxies, err := m.st.ListProxies()
+	if err != nil {
+		slog.Error("读取待恢复代理失败", "err", err)
+		return
+	}
+
+	socatErr := m.socatAvailable()
+	var restored, skipped, failedCount int
+	for _, p := range proxies {
+		if !p.Enabled {
+			skipped++
+			continue
+		}
+		if socatErr != nil {
+			m.sup.MarkFailed(p.ID, fmt.Sprintf("恢复失败：%v", socatErr))
+			_ = m.st.AddEvent(p.ID, store.EventRestoreFailed, socatErr.Error())
+			failedCount++
+			continue
+		}
+		if err := CheckLocalPortFree(p.LocalPort); err != nil {
+			detail := fmt.Sprintf("恢复失败：本地端口 %d 被占用: %v", p.LocalPort, err)
+			m.sup.MarkFailed(p.ID, detail)
+			_ = m.st.AddEvent(p.ID, store.EventRestoreFailed, detail)
+			failedCount++
+			continue
+		}
+		if err := m.startLocked(&p); err != nil {
+			_ = m.st.AddEvent(p.ID, store.EventRestoreFailed, err.Error())
+			failedCount++
+			continue
+		}
+		_ = m.st.AddEvent(p.ID, store.EventEnabled, "重启后自动恢复")
+		restored++
+	}
+	slog.Info("重启恢复完成", "restored", restored, "skipped", skipped, "failed", failedCount)
 }
 
 // Shutdown 停止全部受管进程（程序退出前调用）。

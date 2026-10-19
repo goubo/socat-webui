@@ -252,6 +252,19 @@ func (s *Supervisor) Status(id uint) (StatusInfo, bool) {
 	return p.status, true
 }
 
+// MarkFailed 在无法拉起进程的场景（恢复时端口被占、socat 缺失）直接标记失败；
+// 已有运行中进程时不覆盖。不触发回调，事件由调用方按语义写入。
+func (s *Supervisor) MarkFailed(id uint, detail string) {
+	s.mu.Lock()
+	if p := s.procs[id]; p != nil && (p.status.Status == StatusRunning || p.status.Status == StatusRestarting) {
+		s.mu.Unlock()
+		return
+	}
+	p := &managedProc{status: StatusInfo{Status: StatusFailed, Detail: detail}}
+	s.procs[id] = p
+	s.mu.Unlock()
+}
+
 func (s *Supervisor) notify(id uint, st StatusInfo) {
 	if s.cfg.OnChange != nil {
 		s.cfg.OnChange(id, st)

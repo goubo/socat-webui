@@ -72,6 +72,9 @@ func serve(args []string) error {
 		return fmt.Errorf("初始化面板密码: %w", err)
 	}
 
+	// 恢复先于 HTTP 监听：WebUI 可访问即代表恢复已完成（02-design 核心流程）
+	mgr.Restore()
+
 	httpSrv := &http.Server{Addr: cfg.ListenAddr(), Handler: server.New(cfg, mgr, auth)}
 
 	errCh := make(chan error, 1)
