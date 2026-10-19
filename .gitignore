@@ -1,0 +1,29 @@
+# 本地 Agent 工作区与工具目录（当前项目策略：不跟踪，需跟踪时移除本节）
+AGENTS.md
+CLAUDE.md
+agent-work-dir/
+.claude/
+.zcode/
+.v2c/
+
+# Go 构建产物
+bin/
+*.test
+coverage.out
+
+# 前端（构建产物不入库，保留占位以保证 go:embed 可编译）
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# 本地运行数据
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+
+# 系统 / IDE
+.DS_Store
+.idea/
+.vscode/
