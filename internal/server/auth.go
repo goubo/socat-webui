@@ -27,7 +27,7 @@ const (
 // ErrLogin 登录失败（密码错误或限速），不区分细节以防探测。
 var ErrLogin = errors.New("密码错误或尝试过于频繁")
 
-// AuthService 单密码认证（R-013/D-011）：bcrypt 哈希落库、
+// AuthService 单密码认证：bcrypt 哈希落库、
 // token 存内存（重启失效）、按来源 IP 限速。
 type AuthService struct {
 	mu       sync.Mutex

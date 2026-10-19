@@ -8,7 +8,7 @@ import (
 
 const dialTimeout = 3 * time.Second
 
-// PrecheckResult 前置检查结果：远端连通 + 本地端口空闲（R-006）。
+// PrecheckResult 前置检查结果：远端连通 + 本地端口空闲。
 type PrecheckResult struct {
 	RemoteOK  bool   `json:"remoteOk"`
 	RemoteErr string `json:"remoteErr,omitempty"`

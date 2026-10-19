@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Status 是代理进程的运行态，始终来自真实进程情况（D-005）。
+// Status 是代理进程的运行态，始终来自真实进程情况。
 type Status string
 
 // ErrProcessActive 表示该 id 已有运行中/退避等待中的进程。

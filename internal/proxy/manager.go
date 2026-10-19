@@ -51,7 +51,7 @@ type View struct {
 	Runtime    process.StatusInfo `json:"runtime"`
 }
 
-// HealthInfo R-004/R-007 聚合状态。
+// HealthInfo 聚合状态。
 type HealthInfo struct {
 	Socat struct {
 		Available bool   `json:"available"`
@@ -89,9 +89,9 @@ func NewManager(st *store.Store, cfg ManagerConfig, onChange func(id uint, st pr
 	return m
 }
 
-// Restore 程序启动时按持久化期望状态恢复代理（R-009）：
+// Restore 程序启动时按持久化期望状态恢复代理：
 // enabled 的重新拉起，端口被占或 socat 缺失标记 failed 并记录事件，不阻塞其他代理；
-// 远端不可达不阻止启动（D-009，socat fork 为懒连接）。
+// 远端不可达不阻止启动（socat fork 为懒连接）。
 func (m *Manager) Restore() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -158,7 +158,7 @@ func (m *Manager) validate(in ProxyInput) error {
 	return nil
 }
 
-// socatAvailable 每次操作前实时探测，socat 可中途安装无需重启（D-004）。
+// socatAvailable 每次操作前实时探测，socat 可中途安装无需重启。
 func (m *Manager) socatAvailable() error {
 	if _, _, err := process.DetectSocat(m.cfg.SocatPath); err != nil {
 		return fmt.Errorf("%w: %v", ErrSocatMissing, err)
@@ -218,7 +218,7 @@ func (m *Manager) Get(id uint) (View, []store.Event, error) {
 	return m.view(*p), events, nil
 }
 
-// Create 校验 → socat/远端/本地端口检查 → 落库 →（启用时）启动（R-005/R-006）。
+// Create 校验 → socat/远端/本地端口检查 → 落库 →（启用时）启动。
 func (m *Manager) Create(in ProxyInput, enabled bool) (View, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -364,7 +364,7 @@ func (m *Manager) Enable(id uint) (View, error) {
 	return m.view(*p), nil
 }
 
-// Disable 停止进程并置 enabled=false；进程实际状态为准（R-007）。
+// Disable 停止进程并置 enabled=false；进程实际状态为准。
 func (m *Manager) Disable(id uint) (View, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

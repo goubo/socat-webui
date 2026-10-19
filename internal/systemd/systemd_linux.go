@@ -21,7 +21,7 @@ const (
 	defaultData = "/var/lib/socat-webui"
 )
 
-// unitTemplate 不设置 User=：程序设计为 root 运行（D-010）。
+// unitTemplate 不设置 User=：程序设计为 root 运行。
 const unitTemplate = `[Unit]
 Description=socat-webui 端口映射控制面板
 After=network-online.target
