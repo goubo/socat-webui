@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 构建前端并交叉编译（linux/amd64 + linux/arm64）
+        run: |
+          make build-linux-amd64
+          make build-linux-arm64
+
+      - name: 打包产物与校验和
+        run: |
+          set -eu
+          for arch in amd64 arm64; do
+            name="socat-webui-linux-${arch}"
+            mkdir -p "dist/${name}"
+            cp "bin/linux_${arch}/socat-webui" LICENSE README.md "dist/${name}/"
+            tar -czf "dist/${name}.tar.gz" -C dist "${name}"
+          done
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          ls -lh
+
+      - name: 创建 Release 并上传产物
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
