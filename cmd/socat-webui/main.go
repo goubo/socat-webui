@@ -3,19 +3,24 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 
 	"socat-webui/internal/config"
 	"socat-webui/internal/process"
 	"socat-webui/internal/proxy"
 	"socat-webui/internal/server"
 	"socat-webui/internal/store"
+	"socat-webui/internal/systemd"
 )
 
 func main() {
@@ -35,11 +40,42 @@ func run(args []string) error {
 		}
 	}
 	switch cmd {
-	case "install", "uninstall":
-		return fmt.Errorf("%s 子命令尚未实现，当前版本仅支持 serve", cmd)
+	case "install":
+		return installCmd(args)
+	case "uninstall":
+		return systemd.Uninstall()
 	default:
 		return serve(args)
 	}
+}
+
+func installCmd(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	listen := fs.String("listen", os.Getenv("SOCAT_WEBUI_LISTEN"), "WebUI 监听地址（默认 0.0.0.0）")
+	port := fs.Int("port", config.DefaultPort, "WebUI 监听端口")
+	dbPath := fs.String("db", os.Getenv("SOCAT_WEBUI_DB"), "SQLite 数据文件路径（默认 /var/lib/socat-webui/proxies.db）")
+	password := fs.String("password", os.Getenv("SOCAT_WEBUI_PASSWORD"), "面板密码；缺省交互输入或首启自动生成")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("解析 install 参数: %w", err)
+	}
+	if *listen == "" {
+		*listen = config.DefaultListen
+	}
+	if *password == "" && term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Print("设置面板密码: ")
+		raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return fmt.Errorf("读取密码: %w", err)
+		}
+		*password = strings.TrimSpace(string(raw))
+	}
+	return systemd.Install(systemd.InstallOptions{
+		Listen:   *listen,
+		Port:     *port,
+		DBPath:   *dbPath,
+		Password: *password,
+	})
 }
 
 func serve(args []string) error {

@@ -1,0 +1,12 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends systemd systemd-sysv socat curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY bin/linux_amd64/socat-webui /usr/local/bin/socat-webui
+
+# systemd 容器约定：SIGRTMIN+3 优雅停机，配合 docker restart 模拟系统重启
+STOPSIGNAL SIGRTMIN+3
+
+CMD ["/sbin/init"]

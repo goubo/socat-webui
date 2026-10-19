@@ -20,6 +20,9 @@ build-linux-arm64: build-web
 test:
 	go test ./...
 
+verify-linux:
+	sh scripts/verify-linux.sh
+
 dev:
 	pnpm --dir web dev
 
