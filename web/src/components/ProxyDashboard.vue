@@ -6,6 +6,7 @@ import 'element-plus/theme-chalk/el-message-box.css'
 import { api, ApiError, clearToken } from '../api'
 import type { HealthInfo, PrecheckResult, ProxyDetail, ProxyInput, ProxyView, RuntimeState } from '../types'
 
+defineProps<{ version: string }>()
 const emit = defineEmits<{ logout: [] }>()
 
 const proxies = ref<ProxyView[]>([])
@@ -195,6 +196,7 @@ function fmtTime(value?: string) {
     <el-header class="header">
       <div class="brand">
         <h1>socat-webui</h1>
+        <el-tag type="info" effect="plain">{{ version }}</el-tag>
         <el-tag v-if="health" :type="health.socat.available ? 'success' : 'danger'">
           socat {{ health.socat.available ? health.socat.version : '不可用' }}
         </el-tag>

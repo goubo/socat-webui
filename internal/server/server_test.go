@@ -18,6 +18,7 @@ import (
 	"socat-webui/internal/config"
 	"socat-webui/internal/proxy"
 	"socat-webui/internal/store"
+	appversion "socat-webui/internal/version"
 )
 
 type testEnv struct {
@@ -152,6 +153,28 @@ func TestAPIRequestBodyLimit(t *testing.T) {
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("超限请求体应返回 413, got %d", rec.Code)
+	}
+}
+
+func TestVersionDoesNotRequireAuthentication(t *testing.T) {
+	r, _, cleanup := newHandlerForTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("版本接口应允许未认证访问, got %d", rec.Code)
+	}
+	var out struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("解析版本响应失败: %v", err)
+	}
+	if out.Version != appversion.Version {
+		t.Fatalf("版本不匹配: got %q, want %q", out.Version, appversion.Version)
 	}
 }
 

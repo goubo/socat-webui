@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import 'element-plus/theme-chalk/el-message.css'
 import { api, setToken } from '../api'
 
+defineProps<{ version: string }>()
 const emit = defineEmits<{ success: [] }>()
 
 const form = reactive({ password: '' })
@@ -32,6 +33,7 @@ async function submit() {
     <el-card class="login-card">
       <h2 class="title">socat-webui</h2>
       <p class="subtitle">端口映射控制面板</p>
+      <p class="version">版本 {{ version }}</p>
       <el-form label-position="top" @submit.prevent="submit">
         <el-form-item label="面板密码">
           <el-input
@@ -70,8 +72,14 @@ async function submit() {
   text-align: center;
 }
 .subtitle {
-  margin: 0 0 20px;
+  margin: 0 0 4px;
   color: #909399;
+  text-align: center;
+}
+.version {
+  margin: 0 0 20px;
+  color: #a8abb2;
+  font-size: 12px;
   text-align: center;
 }
 .login-btn {

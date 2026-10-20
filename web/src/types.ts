@@ -1,5 +1,9 @@
 export type RuntimeState = 'running' | 'stopped' | 'failed' | 'restarting'
 
+export interface VersionInfo {
+  version: string
+}
+
 export interface RuntimeStatus {
   status: RuntimeState
   detail?: string

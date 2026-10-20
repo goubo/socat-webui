@@ -1,6 +1,7 @@
 BINARY := socat-webui
 PKG := ./cmd/socat-webui
-LDFLAGS := -s -w
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X socat-webui/internal/version.Version=$(VERSION)
 
 .PHONY: build build-web build-linux-amd64 build-linux-arm64 test dev clean
 

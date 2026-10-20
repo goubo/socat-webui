@@ -161,11 +161,12 @@ sudo systemctl start socat-webui
 
 ### REST API
 
-所有接口在 `/api` 前缀下，除登录外均需 `Authorization: Bearer <token>`：
+所有接口在 `/api` 前缀下，除登录和版本查询外均需 `Authorization: Bearer <token>`：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/auth/login` | 密码换 token |
+| GET | `/api/version` | 查询 socat-webui 版本 |
 | POST | `/api/auth/logout` | 注销 token |
 | GET | `/api/health` | socat 探测与代理统计 |
 | GET / POST | `/api/proxies` | 列表 / 新增 |

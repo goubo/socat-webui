@@ -11,7 +11,7 @@ import (
 
 const maxAPIRequestBodyBytes int64 = 64 << 10
 
-// New 构建 Gin 引擎：/api 路由组（登录免认证，其余 Bearer 保护）+ 嵌入式 SPA 兜底。
+// New 构建 Gin 引擎：/api 路由组（登录和版本免认证，其余 Bearer 保护）+ 嵌入式 SPA 兜底。
 func New(cfg config.Config, mgr *proxy.Manager, auth *AuthService) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -21,6 +21,7 @@ func New(cfg config.Config, mgr *proxy.Manager, auth *AuthService) *gin.Engine {
 	api := r.Group("/api")
 	api.Use(limitRequestBody(maxAPIRequestBodyBytes))
 	api.POST("/auth/login", handleLogin(auth))
+	api.GET("/version", handleVersion())
 
 	protected := api.Group("", auth.Middleware())
 	protected.POST("/auth/logout", handleLogout(auth))

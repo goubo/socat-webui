@@ -1,4 +1,4 @@
-import type { HealthInfo, PrecheckResult, ProxyDetail, ProxyInput, ProxyView } from './types'
+import type { HealthInfo, PrecheckResult, ProxyDetail, ProxyInput, ProxyView, VersionInfo } from './types'
 
 const TOKEN_KEY = 'socat-webui-token'
 
@@ -54,6 +54,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  version: () => request<VersionInfo>('GET', '/version'),
   login: (password: string) => request<{ token: string }>('POST', '/auth/login', { password }),
   logout: () => request<Record<string, never>>('POST', '/auth/logout'),
   health: () => request<HealthInfo>('GET', '/health'),

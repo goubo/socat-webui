@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"socat-webui/internal/proxy"
+	appversion "socat-webui/internal/version"
 )
 
 type errorResponse struct {
@@ -80,6 +81,12 @@ func handleLogout(auth *AuthService) gin.HandlerFunc {
 func handleHealth(mgr *proxy.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, mgr.Health())
+	}
+}
+
+func handleVersion() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"version": appversion.Version})
 	}
 }
 
