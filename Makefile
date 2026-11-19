@@ -11,6 +11,7 @@ build: build-web
 build-web:
 	pnpm --dir web install --frozen-lockfile
 	pnpm --dir web build
+	@touch web/dist/.gitkeep
 
 build-linux-amd64: build-web
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/linux_amd64/$(BINARY) $(PKG)
