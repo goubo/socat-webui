@@ -32,23 +32,27 @@ type Manager struct {
 
 // ProxyInput 创建/修改代理的请求体。
 type ProxyInput struct {
-	Name       string `json:"name"`
-	LocalPort  int    `json:"localPort"`
-	RemoteHost string `json:"remoteHost"`
-	RemotePort int    `json:"remotePort"`
+	Name         string `json:"name"`
+	LocalPort    int    `json:"localPort"`
+	LocalFamily  string `json:"localFamily"`
+	RemoteHost   string `json:"remoteHost"`
+	RemotePort   int    `json:"remotePort"`
+	RemoteFamily string `json:"remoteFamily"`
 }
 
 // View 是代理定义 + 实际运行状态的聚合视图。
 type View struct {
-	ID         uint               `json:"id"`
-	Name       string             `json:"name"`
-	LocalPort  int                `json:"localPort"`
-	RemoteHost string             `json:"remoteHost"`
-	RemotePort int                `json:"remotePort"`
-	Enabled    bool               `json:"enabled"`
-	CreatedAt  time.Time          `json:"createdAt"`
-	UpdatedAt  time.Time          `json:"updatedAt"`
-	Runtime    process.StatusInfo `json:"runtime"`
+	ID           uint               `json:"id"`
+	Name         string             `json:"name"`
+	LocalPort    int                `json:"localPort"`
+	LocalFamily  string             `json:"localFamily"`
+	RemoteHost   string             `json:"remoteHost"`
+	RemotePort   int                `json:"remotePort"`
+	RemoteFamily string             `json:"remoteFamily"`
+	Enabled      bool               `json:"enabled"`
+	CreatedAt    time.Time          `json:"createdAt"`
+	UpdatedAt    time.Time          `json:"updatedAt"`
+	Runtime      process.StatusInfo `json:"runtime"`
 }
 
 // HealthInfo 聚合状态。
@@ -115,7 +119,7 @@ func (m *Manager) Restore() {
 			failedCount++
 			continue
 		}
-		if err := CheckLocalPortFree(p.LocalPort); err != nil {
+		if err := CheckLocalPortFree(p.LocalPort, p.LocalFamily); err != nil {
 			detail := fmt.Sprintf("恢复失败：本地端口 %d 被占用: %v", p.LocalPort, err)
 			m.sup.MarkFailed(p.ID, detail)
 			_ = m.st.AddEvent(p.ID, store.EventRestoreFailed, detail)
@@ -138,6 +142,22 @@ func (m *Manager) Shutdown() {
 	m.sup.StopAll()
 }
 
+// normalizeInput 规范化请求体：远端地址、协议族缺省值与取值合法性；
+// 调用方应使用返回值，避免括号形态与空协议族落库。
+func normalizeInput(in ProxyInput) (ProxyInput, error) {
+	host, err := NormalizeRemoteHost(in.RemoteHost)
+	if err != nil {
+		return in, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	in.RemoteHost = host
+	in.LocalFamily = NormalizeLocalFamily(in.LocalFamily)
+	in.RemoteFamily = NormalizeRemoteFamily(in.RemoteFamily)
+	if err := ValidateFamilies(in.LocalFamily, in.RemoteFamily, host); err != nil {
+		return in, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	return in, nil
+}
+
 func (m *Manager) validate(in ProxyInput) error {
 	name := strings.TrimSpace(in.Name)
 	if name == "" || len(name) > 64 {
@@ -152,10 +172,8 @@ func (m *Manager) validate(in ProxyInput) error {
 	if in.RemotePort < 1 || in.RemotePort > 65535 {
 		return fmt.Errorf("%w: 远端端口超出范围 [1,65535]", ErrValidation)
 	}
-	if err := ValidateRemoteHost(in.RemoteHost); err != nil {
-		return fmt.Errorf("%w: %v", ErrValidation, err)
-	}
-	return nil
+	_, err := normalizeInput(in)
+	return err
 }
 
 // socatAvailable 每次操作前实时探测，socat 可中途安装无需重启。
@@ -169,8 +187,10 @@ func (m *Manager) socatAvailable() error {
 func (m *Manager) view(p store.Proxy) View {
 	v := View{
 		ID: p.ID, Name: p.Name, LocalPort: p.LocalPort,
-		RemoteHost: p.RemoteHost, RemotePort: p.RemotePort,
-		Enabled: p.Enabled, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		LocalFamily: NormalizeLocalFamily(p.LocalFamily),
+		RemoteHost:  p.RemoteHost, RemotePort: p.RemotePort,
+		RemoteFamily: NormalizeRemoteFamily(p.RemoteFamily),
+		Enabled:      p.Enabled, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 	if st, ok := m.sup.Status(p.ID); ok {
 		v.Runtime = st
@@ -182,13 +202,15 @@ func (m *Manager) view(p store.Proxy) View {
 
 // Precheck 独立前置检查入口（表单即时反馈），不产生副作用。
 func (m *Manager) Precheck(in ProxyInput) (PrecheckResult, error) {
-	if err := ValidateRemoteHost(in.RemoteHost); err != nil {
-		return PrecheckResult{}, fmt.Errorf("%w: %v", ErrValidation, err)
-	}
 	if in.RemotePort < 1 || in.RemotePort > 65535 || in.LocalPort < 1 || in.LocalPort > 65535 {
 		return PrecheckResult{}, fmt.Errorf("%w: 端口超出范围", ErrValidation)
 	}
-	return RunPrecheck(in.RemoteHost, in.RemotePort, in.LocalPort), nil
+	normalized, err := normalizeInput(in)
+	if err != nil {
+		return PrecheckResult{}, err
+	}
+	return RunPrecheck(normalized.RemoteHost, normalized.RemotePort, normalized.RemoteFamily,
+		normalized.LocalPort, normalized.LocalFamily), nil
 }
 
 func (m *Manager) List() ([]View, error) {
@@ -226,12 +248,18 @@ func (m *Manager) Create(in ProxyInput, enabled bool) (View, error) {
 	if err := m.validate(in); err != nil {
 		return View{}, err
 	}
+	// 先查库判重再探测端口：已被其他代理使用的端口给出精确的冲突信息，
+	// 也避免运行中的同款监听干扰本地端口探测（不同平台 SO_REUSEADDR 语义不一）。
+	if existing, err := m.st.FindByLocalPort(in.LocalPort); err == nil {
+		return View{}, fmt.Errorf("%w: 已被代理 %q(%d) 使用", ErrPortConflict, existing.Name, existing.ID)
+	}
 	if enabled {
 		if err := m.socatAvailable(); err != nil {
 			return View{}, err
 		}
 	}
-	res := RunPrecheck(in.RemoteHost, in.RemotePort, in.LocalPort)
+	in, _ = normalizeInput(in)
+	res := RunPrecheck(in.RemoteHost, in.RemotePort, in.RemoteFamily, in.LocalPort, in.LocalFamily)
 	if !res.RemoteOK {
 		return View{}, fmt.Errorf("%w: %s", ErrRemoteUnreachable, res.RemoteErr)
 	}
@@ -241,7 +269,8 @@ func (m *Manager) Create(in ProxyInput, enabled bool) (View, error) {
 
 	p := &store.Proxy{
 		Name: strings.TrimSpace(in.Name), LocalPort: in.LocalPort,
-		RemoteHost: in.RemoteHost, RemotePort: in.RemotePort, Enabled: enabled,
+		LocalFamily: in.LocalFamily, RemoteHost: in.RemoteHost,
+		RemotePort: in.RemotePort, RemoteFamily: in.RemoteFamily, Enabled: enabled,
 	}
 	if err := m.st.CreateProxy(p); err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -249,7 +278,7 @@ func (m *Manager) Create(in ProxyInput, enabled bool) (View, error) {
 		}
 		return View{}, err
 	}
-	_ = m.st.AddEvent(p.ID, store.EventCreated, fmt.Sprintf("→ %s:%d", in.RemoteHost, in.RemotePort))
+	_ = m.st.AddEvent(p.ID, store.EventCreated, "→ "+FormatRemoteHost(in.RemoteHost, in.RemotePort))
 
 	if enabled {
 		if err := m.startLocked(p); err != nil {
@@ -276,10 +305,17 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 	if err := m.validate(in); err != nil {
 		return View{}, err
 	}
+	in, _ = normalizeInput(in)
 	old := *p
+	old.LocalFamily = NormalizeLocalFamily(old.LocalFamily)
+	old.RemoteFamily = NormalizeRemoteFamily(old.RemoteFamily)
 	wasActive := false
+	active := func() bool {
+		st, ok := m.sup.Status(id)
+		return ok && (st.Status == process.StatusRunning || st.Status == process.StatusRestarting)
+	}
 
-	portChanged := in.LocalPort != p.LocalPort
+	portChanged := in.LocalPort != p.LocalPort || in.LocalFamily != old.LocalFamily
 	if portChanged {
 		if existing, err := m.st.FindByLocalPort(in.LocalPort); err == nil && existing.ID != id {
 			return View{}, fmt.Errorf("%w: 已被代理 %q(%d) 使用", ErrPortConflict, existing.Name, existing.ID)
@@ -289,14 +325,27 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 		if err := m.socatAvailable(); err != nil {
 			return View{}, err
 		}
-		res := RunPrecheck(in.RemoteHost, in.RemotePort, in.LocalPort)
+		res := RunPrecheck(in.RemoteHost, in.RemotePort, in.RemoteFamily, in.LocalPort, in.LocalFamily)
 		if !res.RemoteOK {
 			return View{}, fmt.Errorf("%w: %s", ErrRemoteUnreachable, res.RemoteErr)
 		}
-		if portChanged && !res.LocalFree {
+		// 同端口仅换监听族时，旧进程自身监听会干扰端口占用检查，须先停再查。
+		samePortFamilyChange := portChanged && in.LocalPort == p.LocalPort
+		if samePortFamilyChange && active() {
+			if err := m.sup.Stop(id); err != nil {
+				return View{}, fmt.Errorf("停止旧进程失败: %w", err)
+			}
+			wasActive = true
+			if err := CheckLocalPortFree(in.LocalPort, in.LocalFamily); err != nil {
+				if restartErr := m.startLocked(&old); restartErr != nil {
+					slog.Error("占用检查失败后恢复旧进程失败", "proxyID", id, "err", restartErr)
+				}
+				return View{}, fmt.Errorf("%w: %v", ErrPortInUse, err)
+			}
+		} else if portChanged && !res.LocalFree {
 			return View{}, fmt.Errorf("%w: %s", ErrPortInUse, res.LocalErr)
 		}
-		if st, ok := m.sup.Status(id); ok && (st.Status == process.StatusRunning || st.Status == process.StatusRestarting) {
+		if !wasActive && active() {
 			if err := m.sup.Stop(id); err != nil {
 				return View{}, fmt.Errorf("停止旧进程失败: %w", err)
 			}
@@ -306,8 +355,10 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 
 	p.Name = strings.TrimSpace(in.Name)
 	p.LocalPort = in.LocalPort
+	p.LocalFamily = in.LocalFamily
 	p.RemoteHost = in.RemoteHost
 	p.RemotePort = in.RemotePort
+	p.RemoteFamily = in.RemoteFamily
 	if err := m.st.UpdateProxy(p); err != nil {
 		if wasActive {
 			if restartErr := m.startLocked(&old); restartErr != nil {
@@ -316,7 +367,7 @@ func (m *Manager) Update(id uint, in ProxyInput) (View, error) {
 		}
 		return View{}, err
 	}
-	_ = m.st.AddEvent(id, store.EventUpdated, fmt.Sprintf("→ %s:%d", in.RemoteHost, in.RemotePort))
+	_ = m.st.AddEvent(id, store.EventUpdated, "→ "+FormatRemoteHost(in.RemoteHost, in.RemotePort))
 
 	if p.Enabled {
 		if err := m.startLocked(p); err != nil {
@@ -351,7 +402,7 @@ func (m *Manager) Enable(id uint) (View, error) {
 	if err := m.socatAvailable(); err != nil {
 		return View{}, err
 	}
-	res := RunPrecheck(p.RemoteHost, p.RemotePort, p.LocalPort)
+	res := RunPrecheck(p.RemoteHost, p.RemotePort, p.RemoteFamily, p.LocalPort, p.LocalFamily)
 	if !res.RemoteOK {
 		return View{}, fmt.Errorf("%w: %s", ErrRemoteUnreachable, res.RemoteErr)
 	}
@@ -464,9 +515,15 @@ func (m *Manager) Health() HealthInfo {
 }
 
 func (m *Manager) startLocked(p *store.Proxy) error {
-	err := m.sup.Start(p.ID, SocatArgs(p.LocalPort, p.RemoteHost, p.RemotePort)...)
-	if err != nil && errors.Is(err, process.ErrProcessActive) {
-		return ErrAlreadyRunning
+	args, err := SocatArgs(p.LocalPort, p.LocalFamily, p.RemoteHost, p.RemotePort, p.RemoteFamily)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	return err
+	if err := m.sup.Start(p.ID, args...); err != nil {
+		if errors.Is(err, process.ErrProcessActive) {
+			return ErrAlreadyRunning
+		}
+		return err
+	}
+	return nil
 }

@@ -12,12 +12,20 @@ export interface RuntimeStatus {
   restartCount: number
 }
 
+/** 本地监听协议族：IPv4 / IPv6 / 双栈（v6 监听同时接受 v4 连接） */
+export type LocalFamily = 'ipv4' | 'ipv6' | 'dual'
+
+/** 远端解析协议族：自动 / 强制 IPv4 / 强制 IPv6（强制仅对主机名生效） */
+export type RemoteFamily = 'auto' | 'ipv4' | 'ipv6'
+
 export interface ProxyView {
   id: number
   name: string
   localPort: number
+  localFamily: LocalFamily
   remoteHost: string
   remotePort: number
+  remoteFamily: RemoteFamily
   enabled: boolean
   createdAt: string
   updatedAt: string
@@ -27,8 +35,10 @@ export interface ProxyView {
 export interface ProxyInput {
   name: string
   localPort: number
+  localFamily: LocalFamily
   remoteHost: string
   remotePort: number
+  remoteFamily: RemoteFamily
 }
 
 export interface HealthInfo {

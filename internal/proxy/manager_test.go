@@ -32,12 +32,18 @@ func mustSocat(t *testing.T) {
 
 func dialEcho(t *testing.T, port int, payload string) string {
 	t.Helper()
-	if !waitForPort(t, port, 3*time.Second) {
-		t.Fatalf("端口 %d 未就绪", port)
+	return dialEchoAddr(t, fmt.Sprintf("127.0.0.1:%d", port), payload)
+}
+
+// dialEchoAddr 按完整地址（可含 IPv6 方括号）连接并读回显。
+func dialEchoAddr(t *testing.T, addr, payload string) string {
+	t.Helper()
+	if !waitForAddr(t, addr, 3*time.Second) {
+		t.Fatalf("地址 %s 未就绪", addr)
 	}
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
-		t.Fatalf("连接 %d 失败: %v", port, err)
+		t.Fatalf("连接 %s 失败: %v", addr, err)
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
@@ -54,9 +60,15 @@ func dialEcho(t *testing.T, port int, payload string) string {
 
 func waitForPort(t *testing.T, port int, timeout time.Duration) bool {
 	t.Helper()
+	return waitForAddr(t, fmt.Sprintf("127.0.0.1:%d", port), timeout)
+}
+
+// waitForAddr 按完整地址轮询就绪（可含 IPv6 方括号）。
+func waitForAddr(t *testing.T, addr string, timeout time.Duration) bool {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 300*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
 		if err == nil {
 			conn.Close()
 			return true
@@ -246,7 +258,11 @@ func TestUpdateDuringRestartUsesNewArguments(t *testing.T) {
 	}
 	m := NewManager(st, ManagerConfig{SocatPath: script, SelfPort: 15200, Backoff: []time.Duration{300 * time.Millisecond}}, nil)
 	defer m.Shutdown()
-	if err := m.sup.Start(p.ID, SocatArgs(p.LocalPort, p.RemoteHost, p.RemotePort)...); err != nil {
+	args, err := SocatArgs(p.LocalPort, p.LocalFamily, p.RemoteHost, p.RemotePort, p.RemoteFamily)
+	if err != nil {
+		t.Fatalf("构造参数失败: %v", err)
+	}
+	if err := m.sup.Start(p.ID, args...); err != nil {
 		t.Fatalf("启动假代理失败: %v", err)
 	}
 	waitStatus(t, m, p.ID, "restarting")
@@ -271,8 +287,81 @@ func TestUpdateDuringRestartUsesNewArguments(t *testing.T) {
 		t.Fatalf("至少应记录修改前后两次启动: %q", data)
 	}
 	for _, line := range lines[1:] {
-		if strings.Contains(line, "TCP:127.0.0.1:") {
+		if strings.Contains(line, "127.0.0.1") {
 			t.Fatalf("修改后不应再使用旧参数: %q", data)
 		}
+	}
+}
+
+// TestForwardFamilyConversion 端到端验证 v4↔v6 转换转发：
+// v6 监听 → v4 远端，以及 v4 监听 → v6 远端。
+func TestForwardFamilyConversion(t *testing.T) {
+	mustSocat(t)
+	if !hasIPv6Loopback(t) {
+		return
+	}
+	st := openManagerStore(t)
+	echo4Port, stopEcho4 := startEchoListener(t)
+	defer stopEcho4()
+
+	echo6, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Fatalf("监听 IPv6 回显失败: %v", err)
+	}
+	defer echo6.Close()
+	go func() {
+		for {
+			conn, err := echo6.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if err != nil {
+						return
+					}
+					if _, err := c.Write(buf[:n]); err != nil {
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+	echo6Port := echo6.Addr().(*net.TCPAddr).Port
+
+	m := NewManager(st, ManagerConfig{SelfPort: 15200}, nil)
+	defer m.Shutdown()
+
+	// v6 监听 → v4 远端
+	v6Local := freeTCPPort(t)
+	v6View, err := m.Create(ProxyInput{
+		Name: "v6-to-v4", LocalPort: v6Local, LocalFamily: LocalFamilyIPv6,
+		RemoteHost: "127.0.0.1", RemotePort: echo4Port,
+	}, true)
+	if err != nil {
+		t.Fatalf("创建 v6→v4 代理失败: %v", err)
+	}
+	if got := dialEchoAddr(t, fmt.Sprintf("[::1]:%d", v6Local), "v6>v4"); got != "v6>v4" {
+		t.Fatalf("v6→v4 转发不符: %q", got)
+	}
+
+	// v4 监听 → v6 远端（远端字面量自动识别）
+	v4Local := freeTCPPort(t)
+	v4View, err := m.Create(ProxyInput{
+		Name: "v4-to-v6", LocalPort: v4Local, LocalFamily: LocalFamilyIPv4,
+		RemoteHost: "::1", RemotePort: echo6Port,
+	}, true)
+	if err != nil {
+		t.Fatalf("创建 v4→v6 代理失败: %v", err)
+	}
+	if got := dialEcho(t, v4Local, "v4>v6"); got != "v4>v6" {
+		t.Fatalf("v4→v6 转发不符: %q", got)
+	}
+
+	if v6View.LocalFamily != LocalFamilyIPv6 || v4View.RemoteHost != "::1" {
+		t.Fatalf("视图协议族不符: %+v %+v", v6View, v4View)
 	}
 }

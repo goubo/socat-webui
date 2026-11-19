@@ -4,7 +4,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import 'element-plus/theme-chalk/el-message.css'
 import 'element-plus/theme-chalk/el-message-box.css'
 import { api, ApiError, clearToken } from '../api'
-import type { HealthInfo, PrecheckResult, ProxyDetail, ProxyInput, ProxyView, RuntimeState } from '../types'
+import type {
+  HealthInfo,
+  LocalFamily,
+  PrecheckResult,
+  ProxyDetail,
+  ProxyInput,
+  ProxyView,
+  RemoteFamily,
+  RuntimeState,
+} from '../types'
 
 defineProps<{ version: string }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -19,6 +28,34 @@ const statusMeta: Record<RuntimeState, { label: string; type: 'success' | 'info'
   stopped: { label: '已停止', type: 'info' },
   failed: { label: '失败', type: 'danger' },
   restarting: { label: '重启中', type: 'warning' },
+}
+
+const localFamilyMeta: Record<LocalFamily, { label: string; show: boolean }> = {
+  ipv4: { label: 'IPv4', show: false },
+  ipv6: { label: 'IPv6', show: true },
+  dual: { label: '双栈', show: true },
+}
+
+const localFamilyOptions = [
+  { label: 'IPv4', value: 'ipv4' as LocalFamily },
+  { label: 'IPv6', value: 'ipv6' as LocalFamily },
+  { label: '双栈（v6 + v4）', value: 'dual' as LocalFamily },
+]
+
+const remoteFamilyOptions = [
+  { label: '自动', value: 'auto' as RemoteFamily },
+  { label: '强制 IPv4', value: 'ipv4' as RemoteFamily },
+  { label: '强制 IPv6', value: 'ipv6' as RemoteFamily },
+]
+
+// IPv6 字面量加方括号展示，避免与端口分隔混淆
+function formatRemote(row: Pick<ProxyView, 'remoteHost' | 'remotePort'>) {
+  return row.remoteHost.includes(':') ? `[${row.remoteHost}]:${row.remotePort}` : `${row.remoteHost}:${row.remotePort}`
+}
+
+// 表格插槽 row 为宽类型，统一经此取协议族元信息
+function familyTag(family: string) {
+  return localFamilyMeta[family as LocalFamily] ?? localFamilyMeta.ipv4
 }
 
 function statusInfo(row: { runtime: { status: RuntimeState } }) {
@@ -83,7 +120,14 @@ async function logout() {
 const dialogVisible = ref(false)
 const editing = ref<ProxyView | null>(null)
 const submitting = ref(false)
-const form = reactive<ProxyInput>({ name: '', localPort: 15201, remoteHost: '', remotePort: 80 })
+const form = reactive<ProxyInput>({
+  name: '',
+  localPort: 15201,
+  localFamily: 'ipv4',
+  remoteHost: '',
+  remotePort: 80,
+  remoteFamily: 'auto',
+})
 const prechecking = ref(false)
 const precheckResult = ref<PrecheckResult | null>(null)
 
@@ -95,7 +139,7 @@ const portConflict = computed(() => {
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', localPort: 15201, remoteHost: '', remotePort: 80 })
+  Object.assign(form, { name: '', localPort: 15201, localFamily: 'ipv4', remoteHost: '', remotePort: 80, remoteFamily: 'auto' })
   precheckResult.value = null
   dialogVisible.value = true
 }
@@ -105,8 +149,10 @@ function openEdit(row: ProxyView) {
   Object.assign(form, {
     name: row.name,
     localPort: row.localPort,
+    localFamily: row.localFamily || 'ipv4',
     remoteHost: row.remoteHost,
     remotePort: row.remotePort,
+    remoteFamily: row.remoteFamily || 'auto',
   })
   precheckResult.value = null
   dialogVisible.value = true
@@ -220,13 +266,16 @@ function fmtTime(value?: string) {
       />
       <el-table v-loading="listLoading" :data="proxies" empty-text="暂无代理，点击右上角新增">
         <el-table-column prop="name" label="名称" min-width="140" />
-        <el-table-column label="本地端口" width="100">
+        <el-table-column label="本地端口" width="120">
           <template #default="{ row }">
             <el-tag type="primary" effect="plain">{{ row.localPort }}</el-tag>
+            <el-tag v-if="familyTag(row.localFamily).show" type="info" effect="plain" class="family-tag">
+              {{ familyTag(row.localFamily).label }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="远端地址" min-width="180">
-          <template #default="{ row }">{{ row.remoteHost }}:{{ row.remotePort }}</template>
+          <template #default="{ row }">{{ formatRemote(row) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
@@ -264,11 +313,22 @@ function fmtTime(value?: string) {
           <el-input-number v-model="form.localPort" :min="1" :max="65535" />
           <span v-if="portConflict" class="field-error">{{ portConflict }}</span>
         </el-form-item>
+        <el-form-item label="本地监听">
+          <el-select v-model="form.localFamily" class="family-select">
+            <el-option v-for="opt in localFamilyOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="远端地址" required>
-          <el-input v-model="form.remoteHost" placeholder="远端 IP 或主机名" />
+          <el-input v-model="form.remoteHost" placeholder="远端 IP（含 IPv6）或主机名" />
         </el-form-item>
         <el-form-item label="远端端口" required>
           <el-input-number v-model="form.remotePort" :min="1" :max="65535" />
+        </el-form-item>
+        <el-form-item label="远端协议">
+          <el-select v-model="form.remoteFamily" class="family-select">
+            <el-option v-for="opt in remoteFamilyOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+          <span class="field-hint">IP 字面量自动识别；强制仅对主机名生效</span>
         </el-form-item>
         <el-form-item>
           <el-button :loading="prechecking" @click="runPrecheck">连通性检查</el-button>
@@ -300,7 +360,8 @@ function fmtTime(value?: string) {
           <el-descriptions :column="1" border>
             <el-descriptions-item label="名称">{{ detail.proxy.name }}</el-descriptions-item>
             <el-descriptions-item label="映射">
-              本地 {{ detail.proxy.localPort }} → {{ detail.proxy.remoteHost }}:{{ detail.proxy.remotePort }}
+              本地 {{ detail.proxy.localPort }}（{{ localFamilyMeta[detail.proxy.localFamily]?.label ?? 'IPv4' }}） →
+              {{ formatRemote(detail.proxy) }}
             </el-descriptions-item>
             <el-descriptions-item label="状态">
               {{ statusMeta[detail.proxy.runtime.status].label }}
@@ -372,6 +433,17 @@ function fmtTime(value?: string) {
 .field-error {
   margin-left: 8px;
   color: #f56c6c;
+  font-size: 12px;
+}
+.family-select {
+  width: 160px;
+}
+.family-tag {
+  margin-left: 4px;
+}
+.field-hint {
+  margin-left: 8px;
+  color: #909399;
   font-size: 12px;
 }
 .pc-tag {

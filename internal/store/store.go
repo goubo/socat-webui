@@ -10,16 +10,19 @@ import (
 )
 
 // Proxy 一条端口映射定义；Enabled 是期望状态，恢复流程的唯一依据。
-// 不加 default 标签：GORM 对零值 false 会跳过写入，导致落库取默认 true。
+// 不加 default 标签：GORM 对零值 false 会跳过写入，导致落库取默认 true；
+// 协议族列例外：历史表 ALTER 加 NOT NULL 列必须有默认值，且默认值即历史行为。
 type Proxy struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	Name       string    `gorm:"size:64;not null" json:"name"`
-	LocalPort  int       `gorm:"not null;uniqueIndex" json:"localPort"`
-	RemoteHost string    `gorm:"size:255;not null" json:"remoteHost"`
-	RemotePort int       `gorm:"not null" json:"remotePort"`
-	Enabled    bool      `gorm:"not null" json:"enabled"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Name         string    `gorm:"size:64;not null" json:"name"`
+	LocalPort    int       `gorm:"not null;uniqueIndex" json:"localPort"`
+	LocalFamily  string    `gorm:"size:8;not null;default:ipv4" json:"localFamily"`
+	RemoteHost   string    `gorm:"size:255;not null" json:"remoteHost"`
+	RemotePort   int       `gorm:"not null" json:"remotePort"`
+	RemoteFamily string    `gorm:"size:8;not null;default:auto" json:"remoteFamily"`
+	Enabled      bool      `gorm:"not null" json:"enabled"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // Event 代理生命周期事件（创建/启停/异常退出/恢复失败等）。
